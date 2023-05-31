@@ -1,0 +1,70 @@
+---
+- name: install postgres
+  become: true
+  apt:
+    update_cache: true
+    state: present
+    pkg:
+      - postgresql
+      - resource-agents-paf
+- name: stop postgres
+  become: true
+  service:
+    name: postgresql
+    state: stopped
+- name: disable postgres
+  become: true
+  service:
+    name: postgresql
+    enabled: false
+- name: create mountpoint
+  become: true
+  file:
+    dest: /data/drbd0
+    state: directory
+    owner: postgres
+    group: postgres
+- name: pcs / drbd resource
+  become: true
+  run_once: true
+  shell:
+    cmd: "pcs resource config drbd0 || \
+          pcs resource create drbd0 \
+          ocf:itab:drbd res=drbd0 op monitor interval=30s \
+          --group postgres"
+- name: pcs / setup mount resource
+  become: true
+  run_once: true
+  shell:
+    cmd: "pcs resource config drbd0_fs || \
+          pcs resource create drbd0_fs \
+          ocf:heartbeat:Filesystem \
+          device=/dev/drbd0 \
+          directory=/data/drbd0 \
+          fstype=ext4 \
+          op monitor interval=30s \
+          --group postgres"
+- name: pcs / setup clusterip
+  become: true
+  run_once: true
+  shell:
+    cmd: "pcs resource config clusterip || \
+          pcs resource create clusterip ocf:heartbeat:IPaddr2 \
+          ip={{ postgres.cluster.floating_ip }} \
+          cidr_netmask={{ postgres.cluster.netmask }} \
+          nic={{ postgres.cluster.interface }} \
+          --group postgres"
+- name: pcs / setup postgres
+  become: true
+  run_once: true
+  shell:
+    cmd: "pcs resource config postgres_db || \
+          pcs resource create postgres_db systemd:postgresql \
+          --group postgres"
+- name: set postgres data_directory
+  become: true
+  lineinfile:
+    path: /etc/postgresql/15/main/postgresql.conf
+    regexp: '^data_directory'
+    line: "data_directory='/data/drbd0'"
+    # configure postgres
